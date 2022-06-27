@@ -1,29 +1,29 @@
 version := "0.0.1"
 
-lazy val `examples-play` = project.in(file("example"))
+lazy val `examples-play` = project
+  .in(file("example"))
   .enablePlugins(PlayScala)
   .settings(
-    description := "Example of http4s on Play",
-    scalacOptions in Compile -= "-Xfatal-warnings",
+    scalaVersion := "2.13.8",
+    description  := "Example of http4s on Play",
     libraryDependencies ++= Seq(
       guice,
-      "javax.xml.bind" % "jaxb-api" % "2.3.0",
-      "org.http4s" %% "http4s-dsl" % "0.20.0-M4",
-    ),
+      "javax.xml.bind" % "jaxb-api"   % "2.3.1",
+      "org.http4s"    %% "http4s-dsl" % "0.22.13"
+    )
   )
   .dependsOn(`play-route`)
 
-
 lazy val `play-route` = project
   .settings(
-    description := "Play wrapper of http4s services",
+    scalaVersion := "2.13.8",
+    description  := "Play wrapper of http4s services",
     libraryDependencies ++= Seq(
-      "com.typesafe.play" %% "play" % "2.6.20",
-      "com.typesafe.play" %% "play-akka-http-server" % "2.6.20" % "test",
-      "co.fs2" %% "fs2-core" % "1.0.2",
-      "co.fs2" %% "fs2-reactive-streams" % "1.0.2",
-      "org.http4s" %% "http4s-core" % "0.20.0-M4",
-      "org.http4s" %% "http4s-server" % "0.20.0-M4" % "test",
-      "org.http4s" %% "http4s-testing" % "0.20.0-M4" % "test",
+      "com.typesafe.play" %% "play"                  % "2.8.16",
+      "com.typesafe.play" %% "play-akka-http-server" % "2.8.16"  % "test",
+      "co.fs2"            %% "fs2-reactive-streams"  % "2.5.11",
+      "org.http4s"        %% "http4s-core"           % "0.22.13",
+      "org.http4s"        %% "http4s-server"         % "0.22.13" % "test"
+      // "org.http4s" %% "http4s-testing" % "0.22.13" % "test",
     )
   )

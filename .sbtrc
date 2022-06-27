@@ -1,0 +1,1 @@
+alias runme=;project examples-play;clean;start
