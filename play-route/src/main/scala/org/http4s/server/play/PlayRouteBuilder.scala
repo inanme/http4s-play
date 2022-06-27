@@ -3,17 +3,14 @@ package org.http4s.server.play
 import akka.stream.scaladsl.Sink
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import cats.data.OptionT
+import cats.effect.std.Dispatcher
 import cats.effect.Async
-import cats.effect.ConcurrentEffect
-import cats.effect.IO
 import cats.syntax.all._
 import fs2.interop.reactivestreams._
 import fs2.Chunk
 import org.http4s.server.play.PlayRouteBuilder.PlayAccumulator
 import org.http4s.server.play.PlayRouteBuilder.PlayRouting
 import org.http4s.server.play.PlayRouteBuilder.PlayTargetStream
-import org.http4s.EmptyBody
 import org.http4s.EntityBody
 import org.http4s.Header
 import org.http4s.Headers
@@ -30,17 +27,13 @@ import scala.concurrent.duration.Duration
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.concurrent.Promise
 
-class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
-  F: ConcurrentEffect[F],
+class PlayRouteBuilder[F[_]](service: HttpRoutes[F], dispatcher: Dispatcher[F])(implicit
+  F: Async[F],
   executionContext: ExecutionContext
 ) {
 
-  type UnwrappedKleisli = Request[F] => OptionT[F, Response[F]]
-  private[this] val unwrappedRun: UnwrappedKleisli = service.run
-
-  def requestHeaderToRequest(requestHeader: RequestHeader, method: Method): Request[F] =
+  def convertToHttp4sRequest(requestHeader: RequestHeader, method: Method): Request[F] =
     Request(
       method = method,
       uri = Uri.unsafeFromString(requestHeader.uri),
@@ -49,29 +42,20 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
           values.map { value =>
             Header.Raw(CIString(headerName), value)
           }
-        }),
-      body = EmptyBody
+        })
     )
 
-  def convertStream(responseStream: EntityBody[F]): PlayTargetStream = {
-    val entityBody: fs2.Stream[F, ByteString] =
-      responseStream.chunks.map(chunk => ByteString(chunk.toArray))
+  def convertToAkkaStream(fs2Stream: EntityBody[F]): F[PlayTargetStream] =
+    fs2Stream.chunks
+      .map(chunk => ByteString(chunk.toArray))
+      .toUnicastPublisher
+      .use(res =>
+        F.delay {
+          Source.fromPublisher[ByteString](res)
+        }
+      )
 
-    Source.fromPublisher(entityBody.toUnicastPublisher)
-  }
-
-  def effectToFuture[T](eff: F[T]): Future[T] = {
-    val promise = Promise[T]
-
-    F.runAsync(eff) {
-      case Left(bad) =>
-        IO(promise.failure(bad))
-      case Right(good) =>
-        IO(promise.success(good))
-    }.unsafeRunSync()
-
-    promise.future
-  }
+  val bufferSize = 512
 
   /**
    * A Play accumulator Sinks HTTP data in, and then pumps out a future of a Result.
@@ -81,31 +65,32 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
    * convert that into an FS2 Stream, then pipe the request body into the http4s request.
    */
   def playRequestToPlayResponse(requestHeader: RequestHeader, method: Method): PlayAccumulator = {
-    val sink: Sink[ByteString, Future[Result]] = {
+    val sink: Sink[ByteString, Future[Result]] =
       Sink.asPublisher[ByteString](fanout = false).mapMaterializedValue { publisher =>
-        val requestBodyStream: fs2.Stream[F, Byte] =
-          publisher.toStream.flatMap(bs => fs2.Stream.chunk(Chunk.bytes(bs.toArray)))
+        val requestBodyStream: EntityBody[F] =
+          publisher
+            .toStreamBuffered(bufferSize)
+            .flatMap(bs => fs2.Stream.chunk(Chunk.array(bs.toArray)))
 
         val http4sRequest: Request[F] =
-          requestHeaderToRequest(requestHeader, method).withBodyStream(requestBodyStream)
+          convertToHttp4sRequest(requestHeader, method).withBodyStream(requestBodyStream)
 
         /** The .get here is safe because this was already proven in the pattern match of the caller * */
-        val wrappedResponse: F[Response[F]] = unwrappedRun(http4sRequest).value.map(_.get)
-        val wrappedResult: F[Result] = wrappedResponse.map { response: Response[F] =>
-          Result(
-            header = convertResponseToHeader(response),
-            body = Streamed(
-              data = convertStream(response.body),
-              contentLength = response.contentLength,
-              contentType =
-                response.contentType.map(it => it.mediaType.mainType + "/" + it.mediaType.subType)
-            )
+        val http4sResponse: F[Response[F]] = service.run(http4sRequest).value.map(_.get)
+        val playResponse: F[Result] = for {
+          response     <- http4sResponse
+          responseBody <- convertToAkkaStream(response.body)
+        } yield Result(
+          header = convertResponseToHeader(response),
+          body = Streamed(
+            data = responseBody,
+            contentLength = response.contentLength,
+            contentType =
+              response.contentType.map(it => it.mediaType.mainType + "/" + it.mediaType.subType)
           )
-        }
-
-        effectToFuture[Result](Async.shift(executionContext) *> wrappedResult)
+        )
+        dispatcher.unsafeToFuture(playResponse)
       }
-    }
     Accumulator.apply(sink)
   }
 
@@ -122,19 +107,10 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
     Method
       .fromString(requestHeader.method)
       .map { method =>
-        val computeRequestHeader: F[Option[Response[F]]] = F.delay {
-          val playRequest = requestHeaderToRequest(requestHeader, method)
-          val optionalResponse: OptionT[F, Response[F]] =
-            unwrappedRun.apply(playRequest)
-          val efff: F[Option[Response[F]]] = optionalResponse.value
-          efff
-        }.flatten
-
-        val matches = effectToFuture[Boolean](
-          Async.shift(executionContext) *> computeRequestHeader.map(_.isDefined)
-        )
-
-        Await.result(matches, Duration.Inf)
+        val http4sRequest: Request[F]    = convertToHttp4sRequest(requestHeader, method)
+        val optionalResponse: F[Boolean] = service.run(http4sRequest).value.map(_.isDefined)
+        val future                       = dispatcher.unsafeToFuture(optionalResponse)
+        Await.result(future, Duration.Inf)
       }
       .getOrElse(false)
   }

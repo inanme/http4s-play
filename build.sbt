@@ -9,7 +9,7 @@ lazy val `examples-play` = project
     libraryDependencies ++= Seq(
       guice,
       "javax.xml.bind" % "jaxb-api"   % "2.3.1",
-      "org.http4s"    %% "http4s-dsl" % "0.22.13"
+      "org.http4s"    %% "http4s-dsl" % "0.23.12"
     )
   )
   .dependsOn(`play-route`)
@@ -20,10 +20,10 @@ lazy val `play-route` = project
     description  := "Play wrapper of http4s services",
     libraryDependencies ++= Seq(
       "com.typesafe.play" %% "play"                  % "2.8.16",
-      "com.typesafe.play" %% "play-akka-http-server" % "2.8.16"  % "test",
-      "co.fs2"            %% "fs2-reactive-streams"  % "2.5.11",
-      "org.http4s"        %% "http4s-core"           % "0.22.13",
-      "org.http4s"        %% "http4s-server"         % "0.22.13" % "test"
+      "com.typesafe.play" %% "play-akka-http-server" % "2.8.16"  % Test,
+      "co.fs2"            %% "fs2-reactive-streams"  % "3.2.8",
+      "org.http4s"        %% "http4s-core"           % "0.23.12",
+      "org.http4s"        %% "http4s-server"         % "0.23.12" % Test
       // "org.http4s" %% "http4s-testing" % "0.22.13" % "test",
     )
   )
