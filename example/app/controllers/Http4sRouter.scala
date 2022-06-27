@@ -1,6 +1,8 @@
 package controllers
 
 import cats.effect.std.Dispatcher
+import cats.effect.unsafe.implicits.global
+import cats.effect.Async
 import cats.effect.IO
 import javax.inject.Inject
 import org.http4s.dsl.io._
@@ -12,24 +14,13 @@ import scala.concurrent.ExecutionContext
 
 class Http4sRouter @Inject() (implicit executionContext: ExecutionContext) extends SimpleRouter {
 
-  private implicit val runtime: cats.effect.unsafe.IORuntime = {
-    import cats.effect.unsafe.IORuntime
-    import cats.effect.unsafe.IORuntimeConfig
-    val (blockingContext, _) = IORuntime.createDefaultBlockingExecutionContext()
-    val (scheduler, _)       = IORuntime.createDefaultScheduler()
-    IORuntime.apply(
-      executionContext,
-      blockingContext,
-      scheduler,
-      () => (),
-      IORuntimeConfig()
-    )
-  }
-
   val (dispatcher, dispatcherShutdown) = Dispatcher[IO].allocated.unsafeRunSync()
-  val exampleService: HttpRoutes[IO] = HttpRoutes.of[IO] { case GET -> _ =>
+
+  val exampleService: HttpRoutes[IO] = HttpRoutes.of[IO] { case GET -> Root / "hello" =>
+    println("test")
     Ok(s"Hello World!")
   }
 
-  override def routes: Routes = new PlayRouteBuilder[IO](exampleService, dispatcher).build
+  override def routes: Routes =
+    new PlayRouteBuilder[IO](exampleService)(Async[IO], dispatcher).build
 }

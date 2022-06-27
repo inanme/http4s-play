@@ -8,29 +8,26 @@ import cats.effect.Async
 import cats.syntax.all._
 import fs2.interop.reactivestreams._
 import fs2.Chunk
+import org.http4s._
 import org.http4s.server.play.PlayRouteBuilder.PlayAccumulator
 import org.http4s.server.play.PlayRouteBuilder.PlayRouting
 import org.http4s.server.play.PlayRouteBuilder.PlayTargetStream
-import org.http4s.EntityBody
-import org.http4s.Header
-import org.http4s.Headers
-import org.http4s.HttpRoutes
-import org.http4s.Method
-import org.http4s.Request
-import org.http4s.Response
-import org.http4s.Uri
+import org.http4s.syntax.all._
 import org.typelevel.ci._
 import play.api.http.HttpEntity.Streamed
 import play.api.libs.streams.Accumulator
-import play.api.mvc._
+import play.api.mvc.EssentialAction
+import play.api.mvc.Handler
+import play.api.mvc.RequestHeader
+import play.api.mvc.ResponseHeader
+import play.api.mvc.Result
 import scala.concurrent.duration.Duration
 import scala.concurrent.Await
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
-class PlayRouteBuilder[F[_]](service: HttpRoutes[F], dispatcher: Dispatcher[F])(implicit
+class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
   F: Async[F],
-  executionContext: ExecutionContext
+  dispatcher: Dispatcher[F]
 ) {
 
   def convertToHttp4sRequest(requestHeader: RequestHeader, method: Method): Request[F] =
@@ -43,6 +40,15 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F], dispatcher: Dispatcher[F])(
             Header.Raw(CIString(headerName), value)
           }
         })
+    )
+
+  def convertToPlayResponse(response: Response[F]): ResponseHeader =
+    ResponseHeader(
+      status = response.status.code,
+      headers = response.headers.headers.collect {
+        case header if !PlayRouteBuilder.AkkaHttpSetsSeparately.contains(header.name) =>
+          header.name.toString -> header.value
+      }.toMap
     )
 
   def convertToAkkaStream(fs2Stream: EntityBody[F]): PlayTargetStream =
@@ -78,27 +84,17 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F], dispatcher: Dispatcher[F])(
           for {
             response <- http4sResponse
           } yield Result(
-            header = convertResponseToHeader(response),
+            header = convertToPlayResponse(response),
             body = Streamed(
               data = convertToAkkaStream(response.body),
               contentLength = response.contentLength,
-              contentType =
-                response.contentType.map(it => it.mediaType.mainType + "/" + it.mediaType.subType)
+              contentType = response.contentType.map(_.value)
             )
           )
         dispatcher.unsafeToFuture(playResponse)
       }
     Accumulator.apply(sink)
   }
-
-  def convertResponseToHeader(response: Response[F]): ResponseHeader =
-    ResponseHeader(
-      status = response.status.code,
-      headers = response.headers.headers.collect {
-        case header if !PlayRouteBuilder.AkkaHttpSetsSeparately.contains(header.name) =>
-          header.name.toString -> header.value
-      }.toMap
-    )
 
   def routeMatches(requestHeader: RequestHeader): Boolean = {
     Method
@@ -131,23 +127,6 @@ object PlayRouteBuilder {
   type PlayAccumulator = Accumulator[ByteString, Result]
 
   type PlayTargetStream = Source[ByteString, _]
-
-  /** Borrowed from Play for now * */
-  def withPrefix(
-    prefix: String,
-    t: _root_.play.api.routing.Router.Routes
-  ): _root_.play.api.routing.Router.Routes =
-    if (prefix == "/") {
-      t
-    } else {
-      val p = if (prefix.endsWith("/")) prefix else prefix + "/"
-      val prefixed: PartialFunction[RequestHeader, RequestHeader] = {
-        case rh: RequestHeader if rh.path.startsWith(p) =>
-          val newPath = rh.path.drop(p.length - 1)
-          rh.withTarget(rh.target.withPath(newPath))
-      }
-      Function.unlift(prefixed.lift.andThen(_.flatMap(t.lift)))
-    }
 
   val AkkaHttpSetsSeparately: Set[CIString] =
     Set(ci"Content-Type", ci"Content-Length", ci"Transfer-Encoding")

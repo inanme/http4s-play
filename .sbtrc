@@ -1,1 +1,1 @@
-alias runme=;project examples-play;clean;start
+alias runme=;project example;clean;start

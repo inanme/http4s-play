@@ -1,6 +1,6 @@
 version := "0.0.1"
 
-lazy val `examples-play` = project
+lazy val example = project
   .in(file("example"))
   .enablePlugins(PlayScala)
   .settings(
