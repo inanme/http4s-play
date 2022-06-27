@@ -45,15 +45,12 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F], dispatcher: Dispatcher[F])(
         })
     )
 
-  def convertToAkkaStream(fs2Stream: EntityBody[F]): F[PlayTargetStream] =
-    fs2Stream.chunks
-      .map(chunk => ByteString(chunk.toArray))
-      .toUnicastPublisher
-      .use(res =>
-        F.delay {
-          Source.fromPublisher[ByteString](res)
-        }
-      )
+  def convertToAkkaStream(fs2Stream: EntityBody[F]): PlayTargetStream =
+    Source.fromPublisher[ByteString] {
+      val stream = fs2Stream.chunks
+        .map(chunk => ByteString(chunk.toArray))
+      StreamUnicastPublisher(stream, dispatcher)
+    }
 
   val bufferSize = 512
 
@@ -77,18 +74,18 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F], dispatcher: Dispatcher[F])(
 
         /** The .get here is safe because this was already proven in the pattern match of the caller * */
         val http4sResponse: F[Response[F]] = service.run(http4sRequest).value.map(_.get)
-        val playResponse: F[Result] = for {
-          response     <- http4sResponse
-          responseBody <- convertToAkkaStream(response.body)
-        } yield Result(
-          header = convertResponseToHeader(response),
-          body = Streamed(
-            data = responseBody,
-            contentLength = response.contentLength,
-            contentType =
-              response.contentType.map(it => it.mediaType.mainType + "/" + it.mediaType.subType)
+        val playResponse: F[Result] =
+          for {
+            response <- http4sResponse
+          } yield Result(
+            header = convertResponseToHeader(response),
+            body = Streamed(
+              data = convertToAkkaStream(response.body),
+              contentLength = response.contentLength,
+              contentType =
+                response.contentType.map(it => it.mediaType.mainType + "/" + it.mediaType.subType)
+            )
           )
-        )
         dispatcher.unsafeToFuture(playResponse)
       }
     Accumulator.apply(sink)
