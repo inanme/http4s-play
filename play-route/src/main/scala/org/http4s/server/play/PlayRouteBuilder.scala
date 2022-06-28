@@ -9,9 +9,6 @@ import cats.syntax.all._
 import fs2.interop.reactivestreams._
 import fs2.Chunk
 import org.http4s._
-import org.http4s.server.play.PlayRouteBuilder.PlayAccumulator
-import org.http4s.server.play.PlayRouteBuilder.PlayRouting
-import org.http4s.server.play.PlayRouteBuilder.PlayTargetStream
 import org.http4s.syntax.all._
 import org.typelevel.ci._
 import play.api.http.HttpEntity.Streamed
@@ -21,8 +18,6 @@ import play.api.mvc.Handler
 import play.api.mvc.RequestHeader
 import play.api.mvc.ResponseHeader
 import play.api.mvc.Result
-import scala.concurrent.duration.Duration
-import scala.concurrent.Await
 import scala.concurrent.Future
 
 class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
@@ -51,14 +46,14 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
       }.toMap
     )
 
-  def convertToAkkaStream(fs2Stream: EntityBody[F]): PlayTargetStream =
+  def convertToAkkaStream(fs2Stream: EntityBody[F]): Source[ByteString, _] =
     Source.fromPublisher[ByteString] {
       val stream = fs2Stream.chunks
         .map(chunk => ByteString(chunk.toArray))
       StreamUnicastPublisher(stream, dispatcher)
     }
 
-  val bufferSize = 512
+  val bufferSize = 256
 
   /**
    * A Play accumulator Sinks HTTP data in, and then pumps out a future of a Result.
@@ -67,7 +62,10 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
    * Here we create a unattached sink, map its materialized value into a publisher,
    * convert that into an FS2 Stream, then pipe the request body into the http4s request.
    */
-  def playRequestToPlayResponse(requestHeader: RequestHeader, method: Method): PlayAccumulator = {
+  def playRequestToPlayResponse(
+    requestHeader: RequestHeader,
+    method: Method
+  ): Accumulator[ByteString, Result] = {
     val sink: Sink[ByteString, Future[Result]] =
       Sink.asPublisher[ByteString](fanout = false).mapMaterializedValue { publisher =>
         val requestBodyStream: EntityBody[F] =
@@ -77,9 +75,7 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
 
         val http4sRequest: Request[F] =
           convertToHttp4sRequest(requestHeader, method).withBodyStream(requestBodyStream)
-
-        /** The .get here is safe because this was already proven in the pattern match of the caller * */
-        val http4sResponse: F[Response[F]] = service.run(http4sRequest).value.map(_.get)
+        val http4sResponse: F[Response[F]] = service.run(http4sRequest).getOrElse(Response.notFound)
         val playResponse: F[Result] =
           for {
             response <- http4sResponse
@@ -96,37 +92,19 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
     Accumulator.apply(sink)
   }
 
-  def routeMatches(requestHeader: RequestHeader): Boolean = {
-    Method
-      .fromString(requestHeader.method)
-      .map { method =>
-        val http4sRequest: Request[F]    = convertToHttp4sRequest(requestHeader, method)
-        val optionalResponse: F[Boolean] = service.run(http4sRequest).value.map(_.isDefined)
-        val future                       = dispatcher.unsafeToFuture(optionalResponse)
-        Await.result(future, Duration.Inf)
-      }
-      .getOrElse(false)
-  }
-
-  def build: PlayRouting = {
-    case requestHeader if routeMatches(requestHeader) =>
-      EssentialAction { requestHeader =>
-        playRequestToPlayResponse(
-          requestHeader,
-          Method.fromString(requestHeader.method).right.get
+  def build: Handler =
+    EssentialAction { requestHeader =>
+      Method
+        .fromString(requestHeader.method)
+        .fold(
+          _ => Accumulator.done(play.api.mvc.Results.NotFound),
+          playRequestToPlayResponse(requestHeader, _)
         )
-      }
-  }
+    }
 
 }
 
 object PlayRouteBuilder {
-
-  type PlayRouting = PartialFunction[RequestHeader, Handler]
-
-  type PlayAccumulator = Accumulator[ByteString, Result]
-
-  type PlayTargetStream = Source[ByteString, _]
 
   val AkkaHttpSetsSeparately: Set[CIString] =
     Set(ci"Content-Type", ci"Content-Length", ci"Transfer-Encoding")
