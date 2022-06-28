@@ -19,11 +19,13 @@ lazy val `play-route` = project
     scalaVersion := "2.13.8",
     description  := "Play wrapper of http4s services",
     libraryDependencies ++= Seq(
-      "com.typesafe.play" %% "play"                  % "2.8.16",
-      "com.typesafe.play" %% "play-akka-http-server" % "2.8.16"  % Test,
-      "co.fs2"            %% "fs2-reactive-streams"  % "3.2.8",
-      "org.http4s"        %% "http4s-core"           % "0.23.12",
-      "org.http4s"        %% "http4s-server"         % "0.23.12" % Test
+      "com.typesafe.play"      %% "play"                  % "2.8.16",
+      "com.typesafe.play"      %% "play-akka-http-server" % "2.8.16"  % Test,
+      "co.fs2"                 %% "fs2-reactive-streams"  % "3.2.8",
+      "org.http4s"             %% "http4s-core"           % "0.23.12",
+      "org.http4s"             %% "http4s-dsl"            % "0.23.12",
+      "org.http4s"             %% "http4s-server"         % "0.23.12" % Test,
+      "org.scalatestplus.play" %% "scalatestplus-play"    % "5.1.0"   % Test
       // "org.http4s" %% "http4s-testing" % "0.22.13" % "test",
     )
   )
