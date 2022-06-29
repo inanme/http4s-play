@@ -3,6 +3,10 @@ package org.http4s.server.play
 import akka.stream.scaladsl.Sink
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
+import cats.~>
+import cats.arrow.FunctionK
+import cats.data.Kleisli
+import cats.data.OptionT
 import cats.effect.std.Dispatcher
 import cats.effect.Async
 import cats.syntax.all._
@@ -20,7 +24,7 @@ import play.api.mvc.ResponseHeader
 import play.api.mvc.Result
 import scala.concurrent.Future
 
-class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
+class PlayRouteBuilder[F[_]](service: HttpRoutes[Kleisli[F, Int, *]])(implicit
   F: Async[F],
   dispatcher: Dispatcher[F]
 ) {
@@ -75,7 +79,16 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[F])(implicit
 
         val http4sRequest: Request[F] =
           convertToHttp4sRequest(requestHeader, method).withBodyStream(requestBodyStream)
-        val http4sResponse: F[Response[F]] = service.run(http4sRequest).getOrElse(Response.notFound)
+
+        val m1 = http4sRequest.mapK(Kleisli.liftK[F, Int])
+        val m: F[Response[Kleisli[F, Int, *]]] =
+          service
+            .run(m1)
+            .value
+            .run(1)
+            .map(_.getOrElse(Response.notFound.mapK(Kleisli.liftK[F, Int])))
+        val http4sResponse: F[Response[F]] = m.map(_.mapK(Kleisli.applyK(1)))
+
         val playResponse: F[Result] =
           for {
             response <- http4sResponse

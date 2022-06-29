@@ -1,5 +1,10 @@
 version := "0.0.1"
 
+val kindProjector = addCompilerPlugin(
+  "org.typelevel" % "kind-projector" % "0.13.2" cross CrossVersion.full
+)
+val betterMonadicFor = addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1")
+
 lazy val example = project
   .in(file("example"))
   .enablePlugins(PlayScala)
@@ -10,7 +15,9 @@ lazy val example = project
       guice,
       "javax.xml.bind" % "jaxb-api"   % "2.3.1",
       "org.http4s"    %% "http4s-dsl" % "0.23.12"
-    )
+    ),
+    kindProjector,
+    betterMonadicFor
   )
   .dependsOn(`play-route`)
 
@@ -27,5 +34,7 @@ lazy val `play-route` = project
       "org.http4s"             %% "http4s-server"         % "0.23.12" % Test,
       "org.scalatestplus.play" %% "scalatestplus-play"    % "5.1.0"   % Test
       // "org.http4s" %% "http4s-testing" % "0.22.13" % "test",
-    )
+    ),
+    kindProjector,
+    betterMonadicFor
   )

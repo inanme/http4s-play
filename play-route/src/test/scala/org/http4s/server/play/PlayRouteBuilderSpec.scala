@@ -1,10 +1,12 @@
 package org.http4s.server.play
 
 import akka.stream.Materializer
+import cats.data.Kleisli
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import cats.effect.Async
 import cats.effect.IO
+import org.http4s.dsl.Http4sDsl
 import org.http4s.HttpRoutes
 import org.scalatestplus.play.components.OneAppPerSuiteWithComponents
 import org.scalatestplus.play.PlaySpec
@@ -28,9 +30,9 @@ class PlayRouteBuilderSpec extends PlaySpec with OneAppPerSuiteWithComponents {
 
       val (dispatcher, _) = Dispatcher[IO].allocated.unsafeRunSync()
 
-      val exampleService: HttpRoutes[IO] = {
-        import org.http4s.dsl.io._
-        HttpRoutes.of[IO] { case GET -> Root / "hello" =>
+      val exampleService: HttpRoutes[Kleisli[IO, Int, *]] = {
+        object dsl extends Http4sDsl[Kleisli[IO, Int, *]]; import dsl._
+        HttpRoutes.of[Kleisli[IO, Int, *]] { case GET -> Root / "hello" =>
           Ok(s"Hello World!")
         }
       }
