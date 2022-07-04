@@ -32,9 +32,12 @@ lazy val `play-route` = project
       "org.http4s"             %% "http4s-core"           % "0.23.12",
       "org.http4s"             %% "http4s-dsl"            % "0.23.12",
       "org.http4s"             %% "http4s-server"         % "0.23.12" % Test,
-      "org.scalatestplus.play" %% "scalatestplus-play"    % "5.1.0"   % Test
+      "org.scalatestplus.play" %% "scalatestplus-play"    % "5.1.0"   % Test,
+      "com.disneystreaming"    %% "weaver-cats"           % "0.7.13",
+      "com.disneystreaming"    %% "weaver-scalacheck"     % "0.7.13"
       // "org.http4s" %% "http4s-testing" % "0.22.13" % "test",
     ),
+    testFrameworks += new TestFramework("weaver.framework.CatsEffect"),
     kindProjector,
     betterMonadicFor
   )

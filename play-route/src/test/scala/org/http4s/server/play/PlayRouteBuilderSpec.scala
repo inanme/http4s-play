@@ -28,11 +28,12 @@ class PlayRouteBuilderSpec extends PlaySpec with OneAppPerSuiteWithComponents {
 
     lazy val router = new SimpleRouter {
 
-      val (dispatcher, _) = Dispatcher[IO].allocated.unsafeRunSync()
+      val (dispatcher, _)       = Dispatcher[IO].allocated.unsafeRunSync()
+      implicit val dispatcherIO: Dispatcher[IO] = dispatcher
 
-      val exampleService: HttpRoutes[Kleisli[IO, Int, *]] = {
-        object dsl extends Http4sDsl[Kleisli[IO, Int, *]]; import dsl._
-        HttpRoutes.of[Kleisli[IO, Int, *]] { case GET -> Root / "hello" =>
+      val exampleService: HttpRoutes[Kleisli[IO, RequestContext, *]] = {
+        object dsl extends Http4sDsl[Kleisli[IO, RequestContext, *]]; import dsl._
+        HttpRoutes.of[Kleisli[IO, RequestContext, *]] { case GET -> Root / "hello" =>
           Ok(s"Hello World!")
         }
       }
@@ -40,7 +41,7 @@ class PlayRouteBuilderSpec extends PlaySpec with OneAppPerSuiteWithComponents {
       override def routes: Routes = {
         import play.api.routing.sird._
         { case GET(p"/hello") =>
-          new PlayRouteBuilder[IO](exampleService)(Async[IO], dispatcher).build
+          new PlayRouteBuilder[IO](exampleService, None).build
         }
       }
     }

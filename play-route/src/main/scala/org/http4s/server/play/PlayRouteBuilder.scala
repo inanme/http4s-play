@@ -3,10 +3,7 @@ package org.http4s.server.play
 import akka.stream.scaladsl.Sink
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import cats.~>
-import cats.arrow.FunctionK
 import cats.data.Kleisli
-import cats.data.OptionT
 import cats.effect.std.Dispatcher
 import cats.effect.Async
 import cats.syntax.all._
@@ -22,9 +19,14 @@ import play.api.mvc.Handler
 import play.api.mvc.RequestHeader
 import play.api.mvc.ResponseHeader
 import play.api.mvc.Result
+
+import scala.annotation.nowarn
 import scala.concurrent.Future
 
-class PlayRouteBuilder[F[_]](service: HttpRoutes[Kleisli[F, Int, *]])(implicit
+class PlayRouteBuilder[F[_]](
+  service: HttpRoutes[Kleisli[F, RequestContext, *]],
+  region: Option[Region]
+)(implicit
   F: Async[F],
   dispatcher: Dispatcher[F]
 ) {
@@ -72,22 +74,33 @@ class PlayRouteBuilder[F[_]](service: HttpRoutes[Kleisli[F, Int, *]])(implicit
   ): Accumulator[ByteString, Result] = {
     val sink: Sink[ByteString, Future[Result]] =
       Sink.asPublisher[ByteString](fanout = false).mapMaterializedValue { publisher =>
+        type Eff[A] = Kleisli[F, RequestContext, A]
         val requestBodyStream: EntityBody[F] =
           publisher
             .toStreamBuffered(bufferSize)
             .flatMap(bs => fs2.Stream.chunk(Chunk.array(bs.toArray)))
 
-        val http4sRequest: Request[F] =
-          convertToHttp4sRequest(requestHeader, method).withBodyStream(requestBodyStream)
+        val http4sRequest: Request[Kleisli[F, RequestContext, *]] =
+          convertToHttp4sRequest(requestHeader, method)
+            .withBodyStream(requestBodyStream)
+            .mapK(Kleisli.liftK[F, RequestContext])
 
-        val m1 = http4sRequest.mapK(Kleisli.liftK[F, Int])
-        val m: F[Response[Kleisli[F, Int, *]]] =
+        val reqCtx: RequestContext = unauthReqToAppContext(http4sRequest, region)
+        val http4sResponse: F[Response[F]] =
           service
-            .run(m1)
+            .run(http4sRequest)
             .value
-            .run(1)
-            .map(_.getOrElse(Response.notFound.mapK(Kleisli.liftK[F, Int])))
-        val http4sResponse: F[Response[F]] = m.map(_.mapK(Kleisli.applyK(1)))
+            .run(reqCtx)
+            .map(_.getOrElse(Response.notFound.mapK(Kleisli.liftK[F, RequestContext])))
+            .map(_.mapK(Kleisli.applyK(reqCtx)))
+
+        @nowarn
+        val http4sResponse1: F[Response[F]] =
+          service
+            .run(http4sRequest)
+            .getOrElse(Response.notFound[Eff])
+            .run(reqCtx)
+            .map(_.mapK(Kleisli.applyK(reqCtx)))
 
         val playResponse: F[Result] =
           for {
